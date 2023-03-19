@@ -1,0 +1,254 @@
+<!doctype html>
+<form>
+	<input required placeholder="Seed..." type=password name="secret" pattern="[A-Z0-9]{32}">
+	<output name="otp">------</output>
+	<progress id="progress"></progress>
+</form>
+<style>
+	html,
+	body {
+		background: #e0e0e0;
+		height: 100%;
+		margin: 0;
+	}
+
+	form {
+		display: grid;
+		height: 100%;
+		align-content: center;
+		justify-content: center;
+		justify-items: center;
+		margin: 0;
+	}
+
+	form:invalid>progress {
+		display: none;
+	}
+
+	form>input {
+		border: none;
+		background: none;
+		text-align: center;
+		font-size: 5vmin;
+	}
+
+	form>input:invalid {
+		color: red;
+	}
+
+	form>input:not(:invalid):not(:hover) {
+		opacity: .2;
+	}
+
+	form>progress {
+		width: 80%;
+		padding: 5vmin
+	}
+
+	form>output {
+		border-radius: 5vmin;
+		background: #e0e0e0;
+		box-shadow: 2vmin 2vmin 6vmin #bebebe, -2vmin -2vmin 6vmin #ffffff;
+		font-size: 25vmin;
+		font-family: monospace;
+		padding: 5vmin;
+	}
+</style>
+<script type="module">
+	function sha1(message) {
+		function bytesToWords(bytes) {
+			let words = [];
+			for (let i = 0, b = 0; i < bytes.length; i++, b += 8)
+				words[b >>> 5] |= bytes[i] << (24 - b % 32);
+			return words;
+		}
+		function wordsToBytes(words) {
+			let bytes = [];
+			for (let b = 0; b < words.length * 32; b += 8)
+				bytes.push((words[b >>> 5] >>> (24 - b % 32)) & 0xFF);
+			return bytes;
+		}
+		let m = bytesToWords(message),
+			l = message.length * 8,
+			w = [],
+			H0 = 1732584193,
+			H1 = -271733879,
+			H2 = -1732584194,
+			H3 = 271733878,
+			H4 = -1009589776;
+
+		// Padding
+		m[l >> 5] |= 0x80 << (24 - l % 32);
+		m[((l + 64 >>> 9) << 4) + 15] = l;
+
+		for (let i = 0; i < m.length; i += 16) {
+			let a = H0, b = H1, c = H2, d = H3, e = H4;
+			for (let j = 0; j < 80; j++) {
+				if (j < 16)
+					w[j] = m[i + j];
+				else {
+					let n = w[j - 3] ^ w[j - 8] ^ w[j - 14] ^ w[j - 16];
+					w[j] = (n << 1) | (n >>> 31);
+				}
+				let t = ((H0 << 5) | (H0 >>> 27)) + H4 + (w[j] >>> 0) + (
+					j < 20 ? (H1 & H2 | ~H1 & H3) + 1518500249 :
+						j < 40 ? (H1 ^ H2 ^ H3) + 1859775393 :
+							j < 60 ? (H1 & H2 | H1 & H3 | H2 & H3) - 1894007588 :
+								(H1 ^ H2 ^ H3) - 899497514);
+
+				H4 = H3;
+				H3 = H2;
+				H2 = (H1 << 30) | (H1 >>> 2);
+				H1 = H0;
+				H0 = t;
+			}
+
+			H0 += a;
+			H1 += b;
+			H2 += c;
+			H3 += d;
+			H4 += e;
+		}
+
+		return wordsToBytes([H0, H1, H2, H3, H4]);
+	}
+
+	function decode(data) {
+		function decodeChunk(data, dest) {
+			function defined(...args) {
+				for (const arg of args)
+					if (arg === undefined)
+						return false;
+				return true;
+			}
+			function byte(n) {
+				return n & 0xff;
+			}
+			function decodeChar(data) {
+				const VOCAB = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ23456789='.split('');
+				const index = VOCAB.indexOf(data);
+				if (index < 0)
+					throw new Error('invalid character: ' + data);
+				if (index === VOCAB.length - 1)
+					return 0;
+				return Math.max(index, 0);
+			}
+			const c1 = decodeChar(data[0]);
+			const c2 = decodeChar(data[1]);
+			const c3 = data[2] ? decodeChar(data[2]) : undefined;
+			const c4 = data[3] ? decodeChar(data[3]) : undefined;
+			const c5 = data[4] ? decodeChar(data[4]) : undefined;
+			const c6 = data[5] ? decodeChar(data[5]) : undefined;
+			const c7 = data[6] ? decodeChar(data[6]) : undefined;
+			const c8 = data[7] ? decodeChar(data[7]) : undefined;
+			dest[0] = byte((c1 << 3) | (c2 >> 2));
+			if (defined(c3, c4))
+				dest[1] = byte((c2 << 6) | (c3 << 1) | (c4 >> 4)); // xxx12 34567 8xxxx
+			if (defined(c4, c5))
+				dest[2] = byte((c4 << 4) | (c5 >> 1)); // x1234 1234x
+			if (defined(c5, c6, c7))
+				dest[3] = byte((c5 << 7) | (c6 << 2) | (c7 >> 3)); // xxxx1 23456 78xxx
+			if (defined(c7, c8))
+				dest[4] = byte((c7 << 5) | c8); // xx123 45678
+		}
+
+		data = data.split(/\s+/).map((s) => s.trim()).join('');
+		const dest = new Uint8Array((data.length * 5) / 8);
+		const chars = data.split('');
+		let coff = 0;
+		let boff = 0;
+		let fin = 5;
+		while (fin == 5 && coff < chars.length && boff < dest.length) {
+			const chunk = chars.slice(coff, coff + 8);
+			if (chunk.indexOf('=') > -1) {
+				chunk.splice(chunk.indexOf('='), 8);
+				switch (chunk.length) {
+					case 2:
+						fin = 1;
+						break;
+					case 4:
+						fin = 2;
+						break;
+					case 5:
+						fin = 3;
+						break;
+					case 7:
+						fin = 4;
+						break;
+					default:
+						throw new Error('invalid padding');
+				}
+			}
+			decodeChunk(chunk, dest.subarray(boff, boff + 5));
+			coff += 8;
+			boff += 5;
+		}
+		return dest.subarray(0, dest.length - 5 + fin);
+	}
+
+	function hotp({ keySize = 64, epoch = 0, codeLength = 6, secret }, counter) {
+		function UInt64Buffer(num) {
+			let i = BigInt(num);
+			let n = 8;
+			const a = new Uint8Array(8);
+			while (i > 0) {
+				a[--n] = Number(i & 255n);
+				i >>= 8n;
+			}
+			return a;
+		}
+		const digest = new Hmac(keySize, decode(secret)).update(UInt64Buffer(counter)).digest();
+		const offset = digest[19] & 0xf;
+		const code = String(((digest[offset + 0] & 0x7f) << 24) | ((digest[offset + 1] & 0xff) << 16) |
+			((digest[offset + 2] & 0xff) << 8) | (digest[offset + 3] & 0xff));
+		return `${new Array(codeLength).fill('0')}${code}`.slice(-1 * codeLength);
+	}
+
+	function totp({ timeSlice = 30, epoch = 0, ...options }, now = Date.now()) {
+		const counter = (now - epoch * 1000) / (timeSlice * 1000);
+		return [hotp(options, Math.floor(counter)), counter % 1];
+	}
+
+	class Hmac {
+		constructor(blocksize, key) {
+			if (blocksize !== 128 && blocksize !== 64) {
+				throw new Error('blocksize must be either 64 for or 128 , but was:' + blocksize);
+			}
+			this.key = new Uint8Array(blocksize);
+			this.opad = new Uint8Array(blocksize);
+			this.ipad = new Uint8Array(blocksize);
+			this.key.set(key);
+			for (var i = 0; i < blocksize; i++) {
+				this.ipad[i] = this.key[i] ^ 0x36;
+				this.opad[i] = this.key[i] ^ 0x5c;
+			}
+			this.hash = new Hash();
+			this.hash.update(this.ipad);
+		}
+		update(data) {
+			this.hash.update(data);
+			return this;
+		}
+		digest() {
+			return new Hash().update(this.opad).update(this.hash.digest()).digest();
+		}
+	}
+	class Hash {
+		constructor() { this.data = []; }
+		update = (data) => (this.data.push(...data.values()), this);
+		digest = () => sha1(this.data);
+	}
+
+	const form = document.forms[0];
+	const progress = document.getElementById('progress');
+	form.secret.value = localStorage.otp || '';
+	form.secret.oninput = function (e) { localStorage.otp = this.value; }
+	function gen() {
+		if (!form.checkValidity()) return form.otp.innerText = '------';
+		const [val, remain] = totp({ secret: form.secret.value });
+		if (val != form.otp.innerText) form.otp.innerText = val;
+		progress.value = remain;
+	}
+	gen();
+	setInterval(gen, 1000);
+</script>
